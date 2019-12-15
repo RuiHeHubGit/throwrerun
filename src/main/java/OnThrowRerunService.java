@@ -138,19 +138,28 @@ public class OnThrowRerunService {
         service.className = curClassName;
         StringBuilder descBuilder = new StringBuilder()
                 .append(curClassName).append(".").append(curMethodName).append(" is called");
-        StackTraceElement lastStackTraceElement = null;
         if (traceIndex + 1 < stackTraceElements.length) {
-            lastStackTraceElement = stackTraceElements[traceIndex + 1];
-        }
-        if (lastStackTraceElement != null) {
-            service.calledLine = lastStackTraceElement.getLineNumber();
-            descBuilder.append(" on ").append(lastStackTraceElement.getClassName()).append(".").append(lastStackTraceElement.getMethodName())
-                    .append("(").append(lastStackTraceElement.getFileName()).append(":").append(service.calledLine).append(")");
+            service.calledLine = stackTraceElements[traceIndex + 1].getLineNumber();
+            for (int i = traceIndex; i < stackTraceElements.length; i++) {
+                StackTraceElement element = stackTraceElements[i];
+                String className = element.getClassName();
+                if (i + 1 < stackTraceElements.length && !isSkipPackage(stackTraceElements[i+1].getClassName())
+                        && className.equals(curClassName) && element.getMethodName().equals(curMethodName)) {
+                    descBuilder.append(" on ").append(stackTraceElements[i + 1]);
+                    break;
+                }
+            }
         } else {
             descBuilder.append(" of ").append(currentStackTraceElement.getFileName());
         }
         service.description = descBuilder.toString();
         return service;
+    }
+
+    private static boolean isSkipPackage(String className) {
+        return className.startsWith(STATIC_FINAL_HOLDER.SERVICE_CLASS_NAME)
+                || className.startsWith(STATIC_FINAL_HOLDER.PACKAGE_JAVA_LANG)
+                || className.startsWith(STATIC_FINAL_HOLDER.PACKAGE_SUN_REFLECT);
     }
 
     private static String getServiceKey(StackTraceElement[] stackTraceElements, int traceIndex) {
@@ -170,10 +179,7 @@ public class OnThrowRerunService {
         }
         for (int i = traceIndex + 1; i < end; i++) {
             StackTraceElement element = stackTraceElements[i];
-            className = element.getClassName();
-            if (className.startsWith(STATIC_FINAL_HOLDER.SERVICE_CLASS_NAME)
-                    || className.startsWith(STATIC_FINAL_HOLDER.PACKAGE_JAVA_LANG)
-                    || className.startsWith(STATIC_FINAL_HOLDER.PACKAGE_SUN_REFLECT)) {
+            if (isSkipPackage(element.getClassName())) {
                 continue;
             }
             keyBuilder.append(":").append(element.getLineNumber());

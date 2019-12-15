@@ -1,4 +1,5 @@
 import java.util.Objects;
+import java.util.Random;
 
 public class Tester {
     private static int num;
@@ -18,7 +19,7 @@ public class Tester {
     private static void test1() {
         if (OnThrowRerunService.simpleRunCurrentMethod(null).isSuccess()) return;
 
-        if(c++ < 3) {
+        if(c++ < 2) {
             test1();
         }
         if (num < 1) {
