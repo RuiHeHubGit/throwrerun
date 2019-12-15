@@ -33,7 +33,6 @@ public class Tester {
 
     private static void test2(String arg) {
         if (OnThrowRerunService.simpleRunCurrentMethod(null, arg).isSuccess()) return;
-
         if (num < 2) {
             num = 2;
             throw new RuntimeException("run test2 throw");

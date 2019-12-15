@@ -40,10 +40,10 @@ public class OnThrowRerunService {
         private static final OnThrowRerunService INVALID_SERVICE;
 
         static {
-            errorLog = Boolean.parseBoolean(System.getProperty("OnThrowRerunService.errorLog", "true"));
-            defaultRunTotalLimit = Integer.getInteger("OnThrowRerunService.defaultRunTotalLimit", 3);
+            errorLog = Boolean.parseBoolean(System.getProperty("OnThrowRerunService.log", "true"));
+            defaultRunTotalLimit = Integer.getInteger("OnThrowRerunService.defaultRerunTotalLimit", 3);
             INVALID_SERVICE = new OnThrowRerunService();
-            INVALID_SERVICE.description = "invalid call.";
+            INVALID_SERVICE.description = "Invalid call.";
         }
     }
 
@@ -62,7 +62,11 @@ public class OnThrowRerunService {
 
     public static OnThrowRerunService getInstance(Object target, Object... arguments) {
         if (rerunMap == null) {
-            rerunMap = ThreadLocal.withInitial(HashMap::new);
+            synchronized (OnThrowRerunService.class) {
+                if(rerunMap == null) {
+                    rerunMap = ThreadLocal.withInitial(HashMap::new);
+                }
+            }
         }
         StackTraceElement[] stackTraceElements = Thread.currentThread().getStackTrace();
         int traceIndex = getRerunMethodTraceIndex(stackTraceElements);
@@ -71,7 +75,7 @@ public class OnThrowRerunService {
         if (service == null) {
             service = createService(stackTraceElements, traceIndex, target, arguments);
             if (service == null) {
-                logError("init rerun service failed.");
+                logError("Failed to create rerun service.");
                 return STATIC_FINAL_HOLDER.INVALID_SERVICE;
             }
             service.key = key;
@@ -256,7 +260,7 @@ public class OnThrowRerunService {
         for (StackTraceElement element : t.getStackTrace()) {
             if (element.getClassName().equals(className)
                     && element.getMethodName().equals(method.getName())) {
-                logError("{}\nfailed at {}.{}({}:{}), {}th run, rerun total limit is {}\n{}\n{}",
+                logError("{}\nFailed at {}.{}({}:{}), {}th run, rerun total limit is {}\n{}\n{}",
                         description,
                         element.getClassName(), element.getMethodName(), element.getFileName(), element.getLineNumber(),
                         rerunTotal + 1, rerunTotalLimit,
