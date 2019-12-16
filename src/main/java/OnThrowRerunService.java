@@ -3,12 +3,8 @@ import org.slf4j.LoggerFactory;
 
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
-import java.lang.reflect.Type;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 public class OnThrowRerunService {
     private static ThreadLocal<Map<String, OnThrowRerunService>> rerunMap;
@@ -63,14 +59,14 @@ public class OnThrowRerunService {
     public static OnThrowRerunService getInstance(Object target, Object... arguments) {
         if (rerunMap == null) {
             synchronized (OnThrowRerunService.class) {
-                if(rerunMap == null) {
+                if (rerunMap == null) {
                     rerunMap = ThreadLocal.withInitial(HashMap::new);
                 }
             }
         }
         StackTraceElement[] stackTraceElements = Thread.currentThread().getStackTrace();
         int traceIndex = getRerunMethodTraceIndex(stackTraceElements);
-        String key = getServiceKey(stackTraceElements, traceIndex);
+        String key = getServiceKey(stackTraceElements[traceIndex]);
         OnThrowRerunService service = rerunMap.get().get(key);
         if (service == null) {
             service = createService(stackTraceElements, traceIndex, target, arguments);
@@ -147,7 +143,7 @@ public class OnThrowRerunService {
             for (int i = traceIndex; i < stackTraceElements.length; i++) {
                 StackTraceElement element = stackTraceElements[i];
                 String className = element.getClassName();
-                if (i + 1 < stackTraceElements.length && !isSkipPackage(stackTraceElements[i+1].getClassName())
+                if (i + 1 < stackTraceElements.length && !isSkipPackage(stackTraceElements[i + 1].getClassName())
                         && className.equals(curClassName) && element.getMethodName().equals(curMethodName)) {
                     descBuilder.append(" on ").append(stackTraceElements[i + 1]);
                     break;
@@ -166,29 +162,9 @@ public class OnThrowRerunService {
                 || className.startsWith(STATIC_FINAL_HOLDER.PACKAGE_SUN_REFLECT);
     }
 
-    private static String getServiceKey(StackTraceElement[] stackTraceElements, int traceIndex) {
-        String className = stackTraceElements[traceIndex].getClassName();
-        String methodName = stackTraceElements[traceIndex].getMethodName();
-        StringBuilder keyBuilder = new StringBuilder().append(className).append("#").append(methodName);
-        if (traceIndex == stackTraceElements.length - 1) {
-            return keyBuilder.toString();
-        }
-        int end = 0;
-        for (int i = stackTraceElements.length - 1; i > traceIndex; i--) {
-            StackTraceElement element = stackTraceElements[i];
-            if (element.getClassName().endsWith(className) && element.getMethodName().endsWith(methodName)) {
-                end = i;
-                break;
-            }
-        }
-        for (int i = traceIndex + 1; i < end; i++) {
-            StackTraceElement element = stackTraceElements[i];
-            if (isSkipPackage(element.getClassName())) {
-                continue;
-            }
-            keyBuilder.append(":").append(element.getLineNumber());
-        }
-        return keyBuilder.toString();
+    private static String getServiceKey(StackTraceElement stackTraceElement) {
+        return new StringBuilder().append(stackTraceElement.getClassName()).append("#")
+                .append(stackTraceElement.getMethodName()).toString();
     }
 
     private static int getRerunMethodTraceIndex(StackTraceElement[] stackTraceElements) {
@@ -211,22 +187,14 @@ public class OnThrowRerunService {
         try {
             Class<?> clazz = Class.forName(className);
             Method[] methods = clazz.getDeclaredMethods();
-            List<Type> currentMethodParameterTypes = null;
-            int expectParameterCount = 0;
-            if (arguments != null && arguments.length > 0) {
-                currentMethodParameterTypes = Stream.of(arguments)
-                        .map(item -> {
-                            if (item != null) {
-                                return item.getClass();
-                            } else {
-                                return null;
-                            }
-                        }).collect(Collectors.toList());
+            int expectParameterCount = arguments.length;
+            Class<?>[] expectParameterTypes = new Class[expectParameterCount];
+            for (int i = 0; i < arguments.length; i++) {
+                if (arguments[i] != null) {
+                    expectParameterTypes[i] = arguments[i].getClass();
+                }
             }
-            if (currentMethodParameterTypes != null) {
-                expectParameterCount = currentMethodParameterTypes.size();
-            }
-
+            int maxMatchCount = 0;
             for (Method method : methods) {
                 if (!method.getName().equals(methodName)
                         || expectParameterCount != method.getParameterCount()) {
@@ -236,22 +204,82 @@ public class OnThrowRerunService {
                     currentMethod = method;
                     break;
                 }
-                List<Type> parameterTypes = Stream.of(method.getGenericParameterTypes()).collect(Collectors.toList());
-                int index = 0;
-                for (; index < expectParameterCount && index < parameterTypes.size(); index++) {
-                    Type type = currentMethodParameterTypes.get(index);
-                    if (type != null && type != parameterTypes.get(index)) {
-                        break;
-                    }
-                }
-                if (index == expectParameterCount) {
+
+                Class<?>[] parameterTypes = method.getParameterTypes();
+                int matchCount = matchParameterTypesCount(expectParameterTypes, parameterTypes, true);
+                if (matchCount == expectParameterCount) {
                     currentMethod = method;
                     break;
+                }
+                if (matchParameterTypesCount(expectParameterTypes, parameterTypes, false) == expectParameterCount) {
+                    if (matchCount > maxMatchCount) {
+                        maxMatchCount = matchCount;
+                        currentMethod = method;
+                    }
                 }
             }
         } catch (ClassNotFoundException ignored) {
         }
         return currentMethod;
+    }
+
+    private static int matchParameterTypesCount(Class<?>[] expect, Class<?>[] actual, boolean accurate) {
+        if (expect.length != actual.length) {
+            return 0;
+        }
+        int index = 0;
+        for (; index < expect.length; index++) {
+            Class<?> expectType = expect[index];
+            if (expectType == null) {
+                continue;
+            }
+            Class<?> actualType = actual[index];
+            if (isPrimitive(expectType)) {
+                expectType = getBaseType(expectType);
+            }
+            if (isPrimitive(actualType)) {
+                actualType = getBaseType(actualType);
+            }
+            if (accurate && expectType != actualType) {
+                break;
+            }
+            if (!accurate && !expectType.isAssignableFrom(actualType)) {
+                break;
+            }
+        }
+        if (index == expect.length) {
+            return index;
+        }
+        return 0;
+    }
+
+    private static Class<?>[] baseAndWrapperTypes = new Class[]{
+            Boolean.class, boolean.class,
+            Character.class, char.class,
+            Byte.class, byte.class,
+            Short.class, short.class,
+            Integer.class, int.class,
+            Long.class, long.class,
+            Float.class, float.class,
+            Double.class, double.class
+    };
+
+    private static Class<?> getBaseType(Class<?> type) {
+        int end = baseAndWrapperTypes.length - 1;
+        for (int i = 0; i < end; i += 2) {
+            if (type == baseAndWrapperTypes[i]) {
+                return baseAndWrapperTypes[i + 1];
+            }
+        }
+        return null;
+    }
+
+    private static boolean isPrimitive(Class<?> clazz) {
+        try {
+            return ((Class<?>) clazz.getField("TYPE").get(null)).isPrimitive();
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     private void handlerThrow(Throwable t, int rerunTotal) {
@@ -320,12 +348,9 @@ public class OnThrowRerunService {
         return this;
     }
 
-    public <R> R getResult(Class<R> rClass) {
+    public Object getResult() {
         runCurrentMethod();
-        if (result != null && rClass != null && rClass.isAssignableFrom(result.getClass())) {
-            return rClass.cast(result);
-        }
-        return null;
+        return result;
     }
 
     public boolean isRunnable() {
