@@ -1,5 +1,6 @@
 import java.util.Objects;
 import java.util.Random;
+import java.util.function.Supplier;
 
 public class Tester {
     private static int num;
@@ -13,20 +14,24 @@ public class Tester {
         test3("test3", null);
         Tester tester = new Tester();
         System.out.println(tester.test4() + tester.test4());
+        test5();
+        test6();
+        test7();
     }
 
     static int c = 0;
+
     private static void test1() {
         if (OnThrowRerunService.simpleRunCurrentMethod(null).isSuccess()) return;
 
-        if(c++ < 2) {
+        if (c++ < 2) {
             test1();
         }
         if (num < 1) {
             num = 1;
             throw new RuntimeException("run test1 throw");
         }
-        System.out.println("test1"+c);
+        System.out.println("test1" + c);
         num = 0;
 
     }
@@ -55,7 +60,7 @@ public class Tester {
     public String test4() {
         OnThrowRerunService service = OnThrowRerunService.simpleRunCurrentMethod(this);
         if (service.isSuccess()) {
-            return service.getResult(String.class);
+            return (String) service.getResult();
         }
 
         if (num < 4) {
@@ -64,4 +69,27 @@ public class Tester {
         }
         return "test4";
     }
+
+    public static void test5() {
+        String result = OnThrowRerunService.run(() -> getString("test5"));
+        System.out.println(result);
+    }
+
+    public static void test6() {
+        String result = OnThrowRerunService.run(() -> getString("test6"), 5);
+        System.out.println(result);
+    }
+
+    public static void test7() {
+        String result = OnThrowRerunService.run(() -> getString("test7"), (service, t) -> System.out.println(t.getMessage()));
+        System.out.println(result);
+    }
+
+    private static String getString(String str) {
+        if (Math.random() < 0.5) {
+            throw new RuntimeException("run getString throw");
+        }
+        return str;
+    }
+
 }

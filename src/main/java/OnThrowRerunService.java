@@ -5,10 +5,12 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.function.Supplier;
 
 public class OnThrowRerunService {
     private static ThreadLocal<Map<String, OnThrowRerunService>> rerunMap;
     private static boolean errorLog;
+    private static boolean init;
     private static int defaultRunTotalLimit;
     private ThrowHandler throwHandler;
     private int rerunTotalLimit;
@@ -34,12 +36,14 @@ public class OnThrowRerunService {
         private static final String PACKAGE_SUN_REFLECT = "sun.reflect";
         private static final String SERVICE_CLASS_NAME = OnThrowRerunService.class.getName();
         private static final OnThrowRerunService INVALID_SERVICE;
+        public static final boolean init;
 
         static {
             errorLog = Boolean.parseBoolean(System.getProperty("OnThrowRerunService.log", "true"));
             defaultRunTotalLimit = Integer.getInteger("OnThrowRerunService.defaultRerunTotalLimit", 3);
             INVALID_SERVICE = new OnThrowRerunService();
             INVALID_SERVICE.description = "Invalid call.";
+            init = true;
         }
     }
 
@@ -48,6 +52,38 @@ public class OnThrowRerunService {
     }
 
     private OnThrowRerunService() {
+    }
+
+    public static <T> T run(Supplier<T> run) {
+        return run(run, defaultRunTotalLimit, null);
+    }
+
+    public static <T> T run(Supplier<T> run, ThrowHandler throwHandler) {
+        return run(run, defaultRunTotalLimit, throwHandler);
+    }
+
+    public static <T> T run(Supplier<T> run, int rerunTotalLimit) {
+        return run(run, rerunTotalLimit, null);
+    }
+
+    public static <T> T run(Supplier<T> run, int rerunTotalLimit, ThrowHandler throwHandler) {
+        if (!init && rerunTotalLimit == 0) {
+            init = STATIC_FINAL_HOLDER.init;
+            rerunTotalLimit = defaultRunTotalLimit;
+        }
+        OnThrowRerunService service = createService(Thread.currentThread().getStackTrace(), 3, null, null);
+        service.running = true;
+        service.setRerunCountLimit(rerunTotalLimit);
+        service.setThrowHandler(throwHandler);
+        int rerunTotal = 0;
+        do {
+            try {
+                return run.get();
+            } catch (Throwable t) {
+                service.handlerThrow(t, rerunTotal);
+            }
+        } while (rerunTotal++ < service.rerunTotalLimit);
+        return null;
     }
 
     public static OnThrowRerunService simpleRunCurrentMethod(Object target, Object... arguments) {
@@ -187,9 +223,12 @@ public class OnThrowRerunService {
         try {
             Class<?> clazz = Class.forName(className);
             Method[] methods = clazz.getDeclaredMethods();
-            int expectParameterCount = arguments.length;
+            int expectParameterCount = 0;
+            if (arguments != null) {
+                expectParameterCount = arguments.length;
+            }
             Class<?>[] expectParameterTypes = new Class[expectParameterCount];
-            for (int i = 0; i < arguments.length; i++) {
+            for (int i = 0; i < expectParameterCount; i++) {
                 if (arguments[i] != null) {
                     expectParameterTypes[i] = arguments[i].getClass();
                 }
@@ -284,7 +323,6 @@ public class OnThrowRerunService {
 
     private void handlerThrow(Throwable t, int rerunTotal) {
         hasNext = rerunTotal < rerunTotalLimit;
-        logError("<");
         for (StackTraceElement element : t.getStackTrace()) {
             if (element.getClassName().equals(className)
                     && element.getMethodName().equals(method.getName())) {
@@ -308,7 +346,6 @@ public class OnThrowRerunService {
             clean();
             throw new RuntimeException(t);
         }
-        logError(">");
     }
 
     private void clean() {
