@@ -1,12 +1,10 @@
 import java.util.Objects;
-import java.util.Random;
-import java.util.function.Supplier;
 
 public class Tester {
     private static int num;
 
     public static void main(String[] args) {
-        if (OnThrowRerunService.getInstance(null, new Object[]{args}).runCurrentMethod()) return;
+        if (Retry.getInstance(null, new Object[]{args}).runCurrentMethod()) return;
 
         System.out.println("main");
         test1();
@@ -22,7 +20,7 @@ public class Tester {
     static int c = 0;
 
     private static void test1() {
-        if (OnThrowRerunService.simpleRunCurrentMethod(null).isSuccess()) return;
+        if (Retry.simpleRunCurrentMethod(null).isSuccess()) return;
 
         if (c++ < 2) {
             test1();
@@ -37,7 +35,7 @@ public class Tester {
     }
 
     private static void test2(String arg) {
-        if (OnThrowRerunService.simpleRunCurrentMethod(null, arg).isSuccess()) return;
+        if (Retry.simpleRunCurrentMethod(null, arg).isSuccess()) return;
         if (num < 2) {
             num = 2;
             throw new RuntimeException("run test2 throw");
@@ -46,7 +44,7 @@ public class Tester {
     }
 
     private static void test3(String arg1, String arg2) {
-        if (OnThrowRerunService.getInstance(null, arg1, arg2)
+        if (Retry.getInstance(null, arg1, arg2)
                 .setThrowHandler((service, t) -> service.updateArguments(String.valueOf(num = 3), "3"))
                 .setRerunCountLimit(3)
                 .runCurrentMethod()) return;
@@ -58,7 +56,7 @@ public class Tester {
     }
 
     public String test4() {
-        OnThrowRerunService service = OnThrowRerunService.simpleRunCurrentMethod(this);
+        Retry service = Retry.simpleRunCurrentMethod(this);
         if (service.isSuccess()) {
             return (String) service.getResult();
         }
@@ -71,17 +69,17 @@ public class Tester {
     }
 
     public static void test5() {
-        String result = OnThrowRerunService.run(() -> getString("test5"));
+        String result = Retry.run(() -> getString("test5"));
         System.out.println(result);
     }
 
     public static void test6() {
-        String result = OnThrowRerunService.run(() -> getString("test6"), 5);
+        String result = Retry.run(() -> getString("test6"), 5);
         System.out.println(result);
     }
 
     public static void test7() {
-        String result = OnThrowRerunService.run(() -> getString("test7"), (service, t) -> System.out.println(t.getMessage()));
+        String result = Retry.run(() -> getString("test7"), (service, t) -> System.out.println(t.getMessage()));
         System.out.println(result);
     }
 

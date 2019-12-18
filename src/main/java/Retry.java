@@ -7,8 +7,8 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.function.Supplier;
 
-public class OnThrowRerunService {
-    private static ThreadLocal<Map<String, OnThrowRerunService>> rerunMap;
+public class Retry {
+    private static ThreadLocal<Map<String, Retry>> rerunMap;
     private static boolean errorLog;
     private static boolean init;
     private static int defaultRunTotalLimit;
@@ -29,72 +29,77 @@ public class OnThrowRerunService {
 
     // Lazy loading
     private static class STATIC_FINAL_HOLDER {
-        private static final Logger logger = LoggerFactory.getLogger(OnThrowRerunService.class);
+        private static final Logger logger = LoggerFactory.getLogger(Retry.class);
         private static final String METHOD_NAME_KEY1 = "getInstance";
         private static final String METHOD_NAME_KEY2 = "simpleRunCurrentMethod";
         private static final String PACKAGE_JAVA_LANG = "java.lang";
         private static final String PACKAGE_SUN_REFLECT = "sun.reflect";
-        private static final String SERVICE_CLASS_NAME = OnThrowRerunService.class.getName();
-        private static final OnThrowRerunService INVALID_SERVICE;
+        private static final String CURRENT_CLASS_NAME = Retry.class.getName();
+        private static final Retry INVALID_RETRY;
         public static final boolean init;
 
         static {
-            errorLog = Boolean.parseBoolean(System.getProperty("OnThrowRerunService.log", "true"));
-            defaultRunTotalLimit = Integer.getInteger("OnThrowRerunService.defaultRerunTotalLimit", 3);
-            INVALID_SERVICE = new OnThrowRerunService();
-            INVALID_SERVICE.description = "Invalid call.";
+            errorLog = Boolean.parseBoolean(System.getProperty("Retry.log", "true"));
+            defaultRunTotalLimit = Integer.getInteger("Retry.defaultRerunTotalLimit", 3);
+            INVALID_RETRY = new Retry();
+            INVALID_RETRY.description = "Invalid call.";
             init = true;
         }
     }
 
     public interface ThrowHandler {
-        void onThrow(OnThrowRerunService service, Throwable t);
+        void onThrow(Retry retry, Throwable t);
     }
 
-    private OnThrowRerunService() {
+    private Retry() {
     }
 
     public static <T> T run(Supplier<T> run) {
+        if (!init) {
+            init = STATIC_FINAL_HOLDER.init;
+        }
         return run(run, defaultRunTotalLimit, null);
     }
 
     public static <T> T run(Supplier<T> run, ThrowHandler throwHandler) {
+        if (!init) {
+            init = STATIC_FINAL_HOLDER.init;
+        }
         return run(run, defaultRunTotalLimit, throwHandler);
     }
 
     public static <T> T run(Supplier<T> run, int rerunTotalLimit) {
+        if (!init) {
+            init = STATIC_FINAL_HOLDER.init;
+        }
         return run(run, rerunTotalLimit, null);
     }
 
     public static <T> T run(Supplier<T> run, int rerunTotalLimit, ThrowHandler throwHandler) {
-        if (!init && rerunTotalLimit == 0) {
-            init = STATIC_FINAL_HOLDER.init;
-            rerunTotalLimit = defaultRunTotalLimit;
-        }
-        OnThrowRerunService service = createService(Thread.currentThread().getStackTrace(), 3, null, null);
-        service.running = true;
-        service.setRerunCountLimit(rerunTotalLimit);
-        service.setThrowHandler(throwHandler);
+        Retry retry = createRetry(Thread.currentThread().getStackTrace(), 3, null, null);
+        retry.running = true;
+        retry.setRerunCountLimit(rerunTotalLimit);
+        retry.setThrowHandler(throwHandler);
         int rerunTotal = 0;
         do {
             try {
                 return run.get();
             } catch (Throwable t) {
-                service.handlerThrow(t, rerunTotal);
+                retry.handlerThrow(t, rerunTotal);
             }
-        } while (rerunTotal++ < service.rerunTotalLimit);
+        } while (rerunTotal++ < retry.rerunTotalLimit);
         return null;
     }
 
-    public static OnThrowRerunService simpleRunCurrentMethod(Object target, Object... arguments) {
-        OnThrowRerunService service = getInstance(target, arguments);
-        service.runCurrentMethod();
-        return service;
+    public static Retry simpleRunCurrentMethod(Object target, Object... arguments) {
+        Retry retry = getInstance(target, arguments);
+        retry.runCurrentMethod();
+        return retry;
     }
 
-    public static OnThrowRerunService getInstance(Object target, Object... arguments) {
+    public static Retry getInstance(Object target, Object... arguments) {
         if (rerunMap == null) {
-            synchronized (OnThrowRerunService.class) {
+            synchronized (Retry.class) {
                 if (rerunMap == null) {
                     rerunMap = ThreadLocal.withInitial(HashMap::new);
                 }
@@ -102,19 +107,19 @@ public class OnThrowRerunService {
         }
         StackTraceElement[] stackTraceElements = Thread.currentThread().getStackTrace();
         int traceIndex = getRerunMethodTraceIndex(stackTraceElements);
-        String key = getServiceKey(stackTraceElements[traceIndex]);
-        OnThrowRerunService service = rerunMap.get().get(key);
-        if (service == null) {
-            service = createService(stackTraceElements, traceIndex, target, arguments);
-            if (service == null) {
-                logError("Failed to create rerun service.");
-                return STATIC_FINAL_HOLDER.INVALID_SERVICE;
+        String key = getRetryKey(stackTraceElements[traceIndex]);
+        Retry retry = rerunMap.get().get(key);
+        if (retry == null) {
+            retry = createRetry(stackTraceElements, traceIndex, target, arguments);
+            if (retry == null) {
+                logError("Failed to create rerun retry.");
+                return STATIC_FINAL_HOLDER.INVALID_RETRY;
             }
-            service.key = key;
-            rerunMap.get().put(key, service);
+            retry.key = key;
+            rerunMap.get().put(key, retry);
         }
 
-        return service;
+        return retry;
     }
 
     public static void logError(String format, Object... arguments) {
@@ -148,7 +153,7 @@ public class OnThrowRerunService {
         return success;
     }
 
-    private static OnThrowRerunService createService(StackTraceElement[] stackTraceElements, int traceIndex, Object target, Object... arguments) {
+    private static Retry createRetry(StackTraceElement[] stackTraceElements, int traceIndex, Object target, Object... arguments) {
         StackTraceElement currentStackTraceElement = stackTraceElements[traceIndex];
         String curClassName = currentStackTraceElement.getClassName();
         String curMethodName = currentStackTraceElement.getMethodName();
@@ -164,18 +169,17 @@ public class OnThrowRerunService {
             return null;
         }
 
-
-        OnThrowRerunService service = new OnThrowRerunService();
-        service.method = method;
-        service.target = target;
-        service.arguments = arguments;
-        service.rerunTotalLimit = defaultRunTotalLimit;
-        service.runnable = true;
-        service.className = curClassName;
+        Retry retry = new Retry();
+        retry.method = method;
+        retry.target = target;
+        retry.arguments = arguments;
+        retry.rerunTotalLimit = defaultRunTotalLimit;
+        retry.runnable = true;
+        retry.className = curClassName;
         StringBuilder descBuilder = new StringBuilder()
                 .append(curClassName).append(".").append(curMethodName).append(" is called");
         if (traceIndex + 1 < stackTraceElements.length) {
-            service.calledLine = stackTraceElements[traceIndex + 1].getLineNumber();
+            retry.calledLine = stackTraceElements[traceIndex + 1].getLineNumber();
             for (int i = traceIndex; i < stackTraceElements.length; i++) {
                 StackTraceElement element = stackTraceElements[i];
                 String className = element.getClassName();
@@ -188,17 +192,17 @@ public class OnThrowRerunService {
         } else {
             descBuilder.append(" of ").append(currentStackTraceElement.getFileName());
         }
-        service.description = descBuilder.toString();
-        return service;
+        retry.description = descBuilder.toString();
+        return retry;
     }
 
     private static boolean isSkipPackage(String className) {
-        return className.startsWith(STATIC_FINAL_HOLDER.SERVICE_CLASS_NAME)
+        return className.startsWith(STATIC_FINAL_HOLDER.CURRENT_CLASS_NAME)
                 || className.startsWith(STATIC_FINAL_HOLDER.PACKAGE_JAVA_LANG)
                 || className.startsWith(STATIC_FINAL_HOLDER.PACKAGE_SUN_REFLECT);
     }
 
-    private static String getServiceKey(StackTraceElement stackTraceElement) {
+    private static String getRetryKey(StackTraceElement stackTraceElement) {
         return new StringBuilder().append(stackTraceElement.getClassName()).append("#")
                 .append(stackTraceElement.getMethodName()).toString();
     }
@@ -207,7 +211,7 @@ public class OnThrowRerunService {
         int traceIndex = 0;
         for (; traceIndex < stackTraceElements.length; traceIndex++) {
             StackTraceElement element = stackTraceElements[traceIndex];
-            if (element.getClassName().endsWith(STATIC_FINAL_HOLDER.SERVICE_CLASS_NAME)
+            if (element.getClassName().endsWith(STATIC_FINAL_HOLDER.CURRENT_CLASS_NAME)
                     && element.getMethodName().equals(STATIC_FINAL_HOLDER.METHOD_NAME_KEY1)) {
                 if (++traceIndex < stackTraceElements.length && stackTraceElements[traceIndex].getMethodName().equals(STATIC_FINAL_HOLDER.METHOD_NAME_KEY2)) {
                     ++traceIndex;
@@ -355,24 +359,24 @@ public class OnThrowRerunService {
         }
     }
 
-    private OnThrowRerunService setRunnable(boolean runnable) {
+    private Retry setRunnable(boolean runnable) {
         this.runnable = runnable;
         return this;
     }
 
-    public OnThrowRerunService setThrowHandler(ThrowHandler throwHandler) {
+    public Retry setThrowHandler(ThrowHandler throwHandler) {
         this.throwHandler = throwHandler;
         return this;
     }
 
-    public OnThrowRerunService setRerunCountLimit(int rerunTotalLimit) {
+    public Retry setRerunCountLimit(int rerunTotalLimit) {
         if (!running) {
             this.rerunTotalLimit = rerunTotalLimit;
         }
         return this;
     }
 
-    public OnThrowRerunService updateArguments(Object... arguments) {
+    public Retry updateArguments(Object... arguments) {
         if (arguments != null) {
             if (this.arguments == null) {
                 this.arguments = arguments;
