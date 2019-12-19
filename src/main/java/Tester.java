@@ -46,7 +46,7 @@ public class Tester {
     private static void test3(String arg1, String arg2) {
         if (Retry.getInstance(null, arg1, arg2)
                 .setThrowHandler((service, t) -> service.updateArguments(String.valueOf(num = 3), "3"))
-                .setRerunCountLimit(3)
+                .setRetryTotal(1)
                 .runCurrentMethod()) return;
 
         if (!Objects.equals(arg1, arg2)) {

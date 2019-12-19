@@ -10,10 +10,9 @@ import java.util.function.Supplier;
 public class Retry {
     private static ThreadLocal<Map<String, Retry>> rerunMap;
     private static boolean errorLog;
-    private static boolean init;
-    private static int defaultRunTotalLimit;
+    private static int defaultRetryTotal;
     private ThrowHandler throwHandler;
-    private int rerunTotalLimit;
+    private int retryTotal;
     private Method method;
     private Object target;
     private Object[] arguments;
@@ -32,18 +31,20 @@ public class Retry {
         private static final Logger logger = LoggerFactory.getLogger(Retry.class);
         private static final String METHOD_NAME_KEY1 = "getInstance";
         private static final String METHOD_NAME_KEY2 = "simpleRunCurrentMethod";
+        private static final String METHOD_NAME_KEY3 = "run";
         private static final String PACKAGE_JAVA_LANG = "java.lang";
         private static final String PACKAGE_SUN_REFLECT = "sun.reflect";
         private static final String CURRENT_CLASS_NAME = Retry.class.getName();
         private static final Retry INVALID_RETRY;
-        public static final boolean init;
 
         static {
             errorLog = Boolean.parseBoolean(System.getProperty("Retry.log", "true"));
-            defaultRunTotalLimit = Integer.getInteger("Retry.defaultRerunTotalLimit", 3);
+            defaultRetryTotal = Integer.getInteger("Retry.defaultRetryTotal", 3);
             INVALID_RETRY = new Retry();
             INVALID_RETRY.description = "Invalid call.";
-            init = true;
+        }
+
+        static void init() {
         }
     }
 
@@ -55,39 +56,31 @@ public class Retry {
     }
 
     public static <T> T run(Supplier<T> run) {
-        if (!init) {
-            init = STATIC_FINAL_HOLDER.init;
-        }
-        return run(run, defaultRunTotalLimit, null);
+        STATIC_FINAL_HOLDER.init();
+        return run(run, defaultRetryTotal, null);
     }
 
     public static <T> T run(Supplier<T> run, ThrowHandler throwHandler) {
-        if (!init) {
-            init = STATIC_FINAL_HOLDER.init;
-        }
-        return run(run, defaultRunTotalLimit, throwHandler);
+        STATIC_FINAL_HOLDER.init();
+        return run(run, defaultRetryTotal, throwHandler);
     }
 
-    public static <T> T run(Supplier<T> run, int rerunTotalLimit) {
-        if (!init) {
-            init = STATIC_FINAL_HOLDER.init;
-        }
-        return run(run, rerunTotalLimit, null);
+    public static <T> T run(Supplier<T> run, int retryTotal) {
+        return run(run, retryTotal, null);
     }
 
-    public static <T> T run(Supplier<T> run, int rerunTotalLimit, ThrowHandler throwHandler) {
-        Retry retry = createRetry(Thread.currentThread().getStackTrace(), 3, null, null);
-        retry.running = true;
-        retry.setRerunCountLimit(rerunTotalLimit);
+    public static <T> T run(Supplier<T> run, int retryTotal, ThrowHandler throwHandler) {
+        Retry retry = new Retry();
+        retry.setRetryTotal(retryTotal);
         retry.setThrowHandler(throwHandler);
-        int rerunTotal = 0;
+        int throwTotal = 0;
         do {
             try {
                 return run.get();
             } catch (Throwable t) {
-                retry.handlerThrow(t, rerunTotal);
+                retry.handlerThrow(t, ++throwTotal);
             }
-        } while (rerunTotal++ < retry.rerunTotalLimit);
+        } while (throwTotal <= retry.retryTotal);
         return null;
     }
 
@@ -137,18 +130,18 @@ public class Retry {
             return false;
         }
         running = true;
-        int rerunTotal = 0;
+        int throwTotal = 0;
         do {
             try {
                 result = method.invoke(target, arguments);
                 success = true;
                 break;
             } catch (InvocationTargetException e) {
-                handlerThrow(e.getTargetException(), rerunTotal);
+                handlerThrow(e.getTargetException(), ++throwTotal);
             } catch (IllegalAccessException e) {
                 logError(e.getMessage());
             }
-        } while (rerunTotal++ <= rerunTotalLimit);
+        } while (throwTotal++ <= retryTotal);
         clean();
         return success;
     }
@@ -173,7 +166,7 @@ public class Retry {
         retry.method = method;
         retry.target = target;
         retry.arguments = arguments;
-        retry.rerunTotalLimit = defaultRunTotalLimit;
+        retry.retryTotal = defaultRetryTotal;
         retry.runnable = true;
         retry.className = curClassName;
         StringBuilder descBuilder = new StringBuilder()
@@ -325,19 +318,37 @@ public class Retry {
         }
     }
 
-    private void handlerThrow(Throwable t, int rerunTotal) {
-        hasNext = rerunTotal < rerunTotalLimit;
-        for (StackTraceElement element : t.getStackTrace()) {
+    private void handlerThrow(Throwable t, int throwTotal) {
+        hasNext = throwTotal <= retryTotal;
+        String className;
+        String methodName;
+        if (method != null) {
+            className = this.className;
+            methodName = this.method.getName();
+        } else {
+            className = STATIC_FINAL_HOLDER.CURRENT_CLASS_NAME;
+            methodName = STATIC_FINAL_HOLDER.METHOD_NAME_KEY3;
+        }
+        StackTraceElement[] stackTraceElements = t.getStackTrace();
+        for (int i = 0; i < stackTraceElements.length; i++) {
+            StackTraceElement element = stackTraceElements[i];
             if (element.getClassName().equals(className)
-                    && element.getMethodName().equals(method.getName())) {
-                logError("{}\nFailed at {}.{}({}:{}), {}th run, rerun total limit is {}\n{}\n{}",
+                    && element.getMethodName().equals(methodName)) {
+                if (method == null) {
+                    description = stackTraceElements[i - 1].toString();
+                    int index = i - 2;
+                    element = stackTraceElements[index < 0 ? 0 : index];
+                }
+                logError("{}\nFailed at {}.{}({}:{}), {}th throw, retry total limit is {}\n{}\n{}",
                         description,
                         element.getClassName(), element.getMethodName(), element.getFileName(), element.getLineNumber(),
-                        rerunTotal + 1, rerunTotalLimit,
+                        throwTotal, retryTotal,
                         t.getClass().getName(), t.getMessage());
                 break;
             }
         }
+
+
         if (throwHandler != null) {
             try {
                 throwHandler.onThrow(this, t);
@@ -353,6 +364,9 @@ public class Retry {
     }
 
     private void clean() {
+        if (rerunMap == null) {
+            return;
+        }
         Map map = rerunMap.get();
         if (map != null) {
             map.remove(key);
@@ -369,9 +383,9 @@ public class Retry {
         return this;
     }
 
-    public Retry setRerunCountLimit(int rerunTotalLimit) {
+    public Retry setRetryTotal(int retryTotal) {
         if (!running) {
-            this.rerunTotalLimit = rerunTotalLimit;
+            this.retryTotal = retryTotal;
         }
         return this;
     }
@@ -411,7 +425,7 @@ public class Retry {
     }
 
     public int getRerunTotalLimit() {
-        return rerunTotalLimit;
+        return retryTotal;
     }
 
     public Method getMethod() {
