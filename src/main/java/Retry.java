@@ -3,7 +3,9 @@ import org.slf4j.LoggerFactory;
 
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
 
@@ -151,7 +153,7 @@ public class Retry {
         String curClassName = currentStackTraceElement.getClassName();
         String curMethodName = currentStackTraceElement.getMethodName();
 
-        Method method = getCurrentMethod(curClassName, curMethodName, arguments);
+        Method method = getRetryMethod(curClassName, curMethodName, arguments);
         if (method == null) {
             return null;
         }
@@ -215,78 +217,125 @@ public class Retry {
         return traceIndex;
     }
 
-    private static Method getCurrentMethod(String className, String methodName, Object... arguments) {
-        Method currentMethod = null;
+    private static Method getRetryMethod(String className, String methodName, Object... arguments) {
+        Method bestMatch = null;
         try {
             Class<?> clazz = Class.forName(className);
             Method[] methods = clazz.getDeclaredMethods();
-            int expectParameterCount = 0;
+            int parameterCount = 0;
             if (arguments != null) {
-                expectParameterCount = arguments.length;
+                parameterCount = arguments.length;
             }
-            Class<?>[] expectParameterTypes = new Class[expectParameterCount];
-            for (int i = 0; i < expectParameterCount; i++) {
+            Class<?>[] parameterTypes = new Class[parameterCount];
+            List<Integer> nullArgIndexList = null;
+            for (int i = 0; i < parameterCount; i++) {
                 if (arguments[i] != null) {
-                    expectParameterTypes[i] = arguments[i].getClass();
+                    parameterTypes[i] = arguments[i].getClass();
+                } else {
+                    if (nullArgIndexList == null) {
+                        nullArgIndexList = new ArrayList<>(parameterCount);
+                    }
+                    nullArgIndexList.add(i);
                 }
             }
-            int maxMatchCount = 0;
+
+            List<Method> candidateMethods = new ArrayList<>();
             for (Method method : methods) {
                 if (!method.getName().equals(methodName)
-                        || expectParameterCount != method.getParameterCount()) {
+                        || parameterCount != method.getParameterCount()) {
                     continue;
                 }
-                if (expectParameterCount == 0) {
-                    currentMethod = method;
+                if (parameterCount == 0) {
+                    bestMatch = method;
                     break;
+                }
+                candidateMethods.add(method);
+                bestMatch = method;
+            }
+
+            if (candidateMethods.size() > 1) {
+                Integer minDistance = null;
+                List<Class<?>>[] parameterTypeSortedArr = null;
+                if (nullArgIndexList != null) {
+                    parameterTypeSortedArr = new List[parameterCount];
+                    for (Integer nullIndex : nullArgIndexList) {
+                        List<Class<?>> list = new ArrayList<>(methods.length);
+                        parameterTypeSortedArr[nullIndex] = list;
+                        for (Method m : candidateMethods) {
+                            Class<?> c = m.getParameterTypes()[nullIndex];
+                            if (!list.contains(c)) {
+                                list.add(c);
+                            }
+                        }
+                        list.sort((a, b) -> {
+                            if (a == b) {
+                                return 0;
+                            }
+                            if (a.isAssignableFrom(b)) {
+                                return 1;
+                            }
+                            return -1;
+                        });
+                    }
                 }
 
-                Class<?>[] parameterTypes = method.getParameterTypes();
-                int matchCount = matchParameterTypesCount(expectParameterTypes, parameterTypes, true);
-                if (matchCount == expectParameterCount) {
-                    currentMethod = method;
-                    break;
-                }
-                if (matchParameterTypesCount(expectParameterTypes, parameterTypes, false) == expectParameterCount) {
-                    if (matchCount > maxMatchCount) {
-                        maxMatchCount = matchCount;
-                        currentMethod = method;
+                for (Method method : candidateMethods) {
+                    int distance = getParamTypesDistance(method.getParameterTypes(), parameterTypes, parameterTypeSortedArr);
+                    if (minDistance == null || distance >= 0 && distance < minDistance) {
+                        minDistance = distance;
+                        bestMatch = method;
+                        if (distance == 0) {
+                            break;
+                        }
                     }
                 }
             }
         } catch (ClassNotFoundException ignored) {
         }
-        return currentMethod;
+        return bestMatch;
     }
 
-    private static int matchParameterTypesCount(Class<?>[] expect, Class<?>[] actual, boolean accurate) {
-        if (expect.length != actual.length) {
-            return 0;
-        }
-        int index = 0;
-        for (; index < expect.length; index++) {
-            Class<?> expectType = expect[index];
-            if (expectType == null) {
+    private static int getParamTypesDistance(Class<?>[] parameterTypes, Class<?>[] actualParameterTypes, List<Class<?>>[] parameterTypeSortedArr) {
+        int distance = 0;
+        for (int i = 0; i < parameterTypes.length; i++) {
+            Class<?> actualParameterType = actualParameterTypes[i];
+            if (actualParameterType == null) {
+                if (parameterTypeSortedArr == null || i >= parameterTypeSortedArr.length) {
+                    throw new IllegalArgumentException("Illegal argument for ParamTypesDistance");
+                }
+                Class<?> methodParameterType = parameterTypes[i];
+                for (Class<?> c : parameterTypeSortedArr[i]) {
+                    if (c != methodParameterType) {
+                        ++distance;
+                    } else {
+                        break;
+                    }
+                }
                 continue;
             }
-            Class<?> actualType = actual[index];
-            if (isPrimitive(expectType)) {
-                expectType = getBaseType(expectType);
+
+            if (!parameterTypes[i].isAssignableFrom(actualParameterType)) {
+                return -1;
             }
-            if (isPrimitive(actualType)) {
-                actualType = getBaseType(actualType);
-            }
-            if (accurate && expectType != actualType) {
-                break;
-            }
-            if (!accurate && !expectType.isAssignableFrom(actualType)) {
-                break;
+
+            Class<?> clazz = actualParameterType;
+            while (clazz != parameterTypes[i]) {
+                Class<?> superClass = clazz.getSuperclass();
+                if (superClass != null && superClass.isAssignableFrom(actualParameterType)) {
+                    clazz = clazz.getSuperclass();
+                } else {
+                    Class<?>[] classes = clazz.getInterfaces();
+                    for (Class<?> c : classes) {
+                        if (c.isAssignableFrom(actualParameterType)) {
+                            clazz = c;
+                            break;
+                        }
+                    }
+                }
+                ++distance;
             }
         }
-        if (index == expect.length) {
-            return index;
-        }
-        return 0;
+        return distance;
     }
 
     private static Class<?>[] baseAndWrapperTypes = new Class[]{

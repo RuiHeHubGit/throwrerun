@@ -1,3 +1,4 @@
+import java.io.Serializable;
 import java.util.Objects;
 
 public class Tester {
@@ -53,6 +54,18 @@ public class Tester {
             throw new RuntimeException("run test3 throw");
         }
         System.out.println("test3:" + arg1 + "," + arg2);
+    }
+
+    private static void test3(String arg1, Serializable arg2) {
+        System.out.println("test3 overloaded1");
+    }
+
+    private static void test3(String arg1, Object arg2) {
+        System.out.println("test3 overloaded2");
+    }
+
+    private static void test3(Long arg1, String arg2) {
+        System.out.println("test3 overloaded3");
     }
 
     public String test4() {
