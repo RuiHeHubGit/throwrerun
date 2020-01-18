@@ -300,9 +300,6 @@ public class Retry {
         for (int i = 0; i < parameterTypes.length; i++) {
             Class<?> actualParameterType = actualParameterTypes[i];
             if (actualParameterType == null) {
-                if (parameterTypeSortedArr == null || i >= parameterTypeSortedArr.length) {
-                    throw new IllegalArgumentException("Illegal argument for ParamTypesDistance");
-                }
                 Class<?> methodParameterType = parameterTypes[i];
                 for (Class<?> c : parameterTypeSortedArr[i]) {
                     if (c != methodParameterType) {
