@@ -138,10 +138,11 @@ public class Retry {
                 result = method.invoke(target, arguments);
                 success = true;
                 break;
-            } catch (InvocationTargetException e) {
-                handlerThrow(e.getTargetException(), ++throwTotal);
-            } catch (IllegalAccessException e) {
-                logError(e.getMessage());
+            } catch (Throwable e) {
+                if(e instanceof InvocationTargetException) {
+                    e = ((InvocationTargetException) e).getTargetException();
+                }
+                handlerThrow(e, ++throwTotal);
             }
         } while (throwTotal++ <= retryTotal);
         clean();
@@ -254,7 +255,7 @@ public class Retry {
             }
 
             if (candidateMethods.size() > 1) {
-                Integer minDistance = null;
+                int minDistance = Integer.MIN_VALUE;
                 List<Class<?>>[] parameterTypeSortedArr = null;
                 if (nullArgIndexList != null) {
                     parameterTypeSortedArr = new List[parameterCount];
@@ -281,7 +282,7 @@ public class Retry {
 
                 for (Method method : candidateMethods) {
                     int distance = getParamTypesDistance(method.getParameterTypes(), parameterTypes, parameterTypeSortedArr);
-                    if (minDistance == null || distance >= 0 && distance < minDistance) {
+                    if (distance >= 0 && distance < minDistance) {
                         minDistance = distance;
                         bestMatch = method;
                         if (distance == 0) {
