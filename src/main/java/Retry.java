@@ -255,7 +255,7 @@ public class Retry {
             }
 
             if (candidateMethods.size() > 1) {
-                int minDistance = Integer.MIN_VALUE;
+                int minDistance = Integer.MAX_VALUE;
                 List<Class<?>>[] parameterTypeSortedArr = null;
                 if (nullArgIndexList != null) {
                     parameterTypeSortedArr = new List[parameterCount];
