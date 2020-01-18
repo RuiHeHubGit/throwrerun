@@ -139,7 +139,7 @@ public class Retry {
                 success = true;
                 break;
             } catch (Throwable e) {
-                if(e instanceof InvocationTargetException) {
+                if (e instanceof InvocationTargetException) {
                     e = ((InvocationTargetException) e).getTargetException();
                 }
                 handlerThrow(e, ++throwTotal);
@@ -261,7 +261,6 @@ public class Retry {
                     parameterTypeSortedArr = new List[parameterCount];
                     for (Integer nullIndex : nullArgIndexList) {
                         List<Class<?>> list = new ArrayList<>(methods.length);
-                        parameterTypeSortedArr[nullIndex] = list;
                         for (Method m : candidateMethods) {
                             Class<?> c = m.getParameterTypes()[nullIndex];
                             if (!list.contains(c)) {
@@ -277,6 +276,9 @@ public class Retry {
                             }
                             return -1;
                         });
+                        if (list.size() > 1 && list.get(list.size() - 1).isAssignableFrom(list.get(0))) {
+                            parameterTypeSortedArr[nullIndex] = list;
+                        }
                     }
                 }
 
